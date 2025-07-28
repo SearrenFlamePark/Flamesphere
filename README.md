@@ -39,9 +39,13 @@ A robust system for continuously syncing your ChatGPT conversations to your Obsi
    cd backend
    pip install -r requirements.txt
    
-   # Create environment file
+   # Create environment file from example
    cp .env.example .env
-   # Edit .env with your configuration
+   
+   # Edit .env with your actual configuration:
+   # - Add your OpenAI API key
+   # - Set your Obsidian vault path
+   # - Configure MongoDB URL if different
    ```
 
 3. **Frontend Setup**
