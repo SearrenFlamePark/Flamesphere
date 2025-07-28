@@ -74,7 +74,7 @@ class SyncConfiguration(BaseModel):
     llm_provider: str = "openai"  # "openai" or "ollama"
     openai_model: str = "gpt-4"
     ollama_model: str = "llama2"
-    obsidian_vault_path: str
+    obsidian_vault_path: str = Field(default="/app/obsidian_vault")
     sync_interval_minutes: int = 60
     auto_sync_enabled: bool = True
     processing_template: str = "advanced_structured"  # "basic", "advanced_structured", "custom"
