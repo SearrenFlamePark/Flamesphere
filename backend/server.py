@@ -493,6 +493,42 @@ obsidian_service = ObsidianService()
 chatgpt_parser = ChatGPTParser()
 
 # API Routes
+@api_router.get("/")
+async def root():
+    return {"message": "ChatGPT to Obsidian Memory Sync API", "version": "1.0.0"}
+
+@api_router.post("/test/connection")
+async def test_llm_connection():
+    """Test LLM connection"""
+    try:
+        config = await db.sync_configs.find_one({})
+        if config:
+            provider = config.get("llm_provider", "openai")
+            model = config.get(f"{provider}_model", "gpt-4" if provider == "openai" else "llama2")
+        else:
+            provider = "openai"
+            model = "gpt-4"
+        
+        # Test connection
+        start_time = time.time()
+        is_healthy = await llm_service.health_check(provider, model)
+        response_time = time.time() - start_time
+        
+        return {
+            "provider": provider,
+            "model": model,
+            "status": "connected" if is_healthy else "failed",
+            "response_time_seconds": round(response_time, 2),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
 @api_router.get("/health")
 async def health_check():
     """System health check endpoint"""
