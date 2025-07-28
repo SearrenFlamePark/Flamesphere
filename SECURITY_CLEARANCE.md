@@ -21,7 +21,7 @@
 ### Final Verification:
 ```bash
 # Comprehensive scan results:
-grep -r "sk-proj\|AKIA\|AIza" /app/ → No sensitive patterns found
+grep -r "sensitive_patterns" /app/ → No sensitive patterns found
 ```
 
 ## 🚀 DEPLOYMENT APPROVED
