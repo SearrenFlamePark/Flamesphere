@@ -1,80 +1,140 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# ChatGPT-Obsidian Sync .gitignore
 
-# IDE and editors
-.idea/
-.vscode/
-
-# Dependencies
-node_modules/
-/node_modules
-/.pnp
-.pnp.js
-.yarn/install-state.gz
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# Testing
-/coverage
-
-# Next.js
-/.next/
-/out/
-next-env.d.ts
-*.tsbuildinfo
-
-# Production builds
-/build
-dist/
-dist
-
-# Environment files (comprehensive coverage)
-
-*token.json*
-*credentials.json*
-
-# Logs and debug files
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-dump.rdb
-
-# System files
-.DS_Store
-*.pem
+# Environment variables
+.env
+.env.local
+.env.test
+.env.production
 
 # Python
 __pycache__/
-*pyc*
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
 venv/
+env/
+ENV/
 .venv/
 
-# Development tools
-chainlit.md
-.chainlit
-.ipynb_checkpoints/
-.ac
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
 
-# Deployment
-.vercel
+# Frontend build
+/frontend/build
+/frontend/.pnp
+.pnp.js
 
-# Data and databases
-agenthub/agents/youtube/db
+# Testing
+/coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
 
-# Archive files and large assets
-**/*.zip
-**/*.tar.gz
-**/*.tar
-**/*.tgz
-*.pack
-*.deb
-*.dylib
+# Jupyter Notebook
+.ipynb_checkpoints
 
-# Build caches
-.cache/
+# pyenv
+.python-version
 
-# Mobile development
-android-sdk/ 
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite3
+
+# Obsidian vault (if you want to exclude test vaults)
+test_obsidian_vault/
+*.obsidian/
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Docker
+.dockerignore
+Dockerfile*
+
+# Backup files
+*.bak
+*.backup
+
+# Local configuration overrides
+local_settings.py
+local_config.json
+
+# API keys and secrets (extra safety)
+*key*
+*secret*
+*token*
+!requirements.txt
