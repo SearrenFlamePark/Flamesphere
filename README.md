@@ -75,6 +75,47 @@ A robust system for continuously syncing your ChatGPT conversations to your Obsi
 6. **Access the Dashboard**
    Open http://localhost:3000 in your browser
 
+## 📋 Configuration & Security
+
+### Environment Variables Setup
+
+**Backend Configuration:**
+1. Copy the example file: `cp backend/.env.example backend/.env`
+2. Edit `backend/.env` with your actual values:
+
+```bash
+# Database Configuration
+MONGO_URL="mongodb://localhost:27017"
+DB_NAME="chatgpt_obsidian_sync"
+
+# LLM Configuration - ADD YOUR ACTUAL API KEY
+OPENAI_API_KEY="sk-your-actual-openai-api-key-here"
+
+# File System Configuration - SET YOUR ACTUAL VAULT PATH  
+OBSIDIAN_VAULT_PATH="/path/to/your/obsidian/vault"
+
+# Ollama Configuration (if using local LLM)
+OLLAMA_BASE_URL="http://localhost:11434"
+
+# Default Settings
+DEFAULT_LLM_PROVIDER="openai"
+DEFAULT_OPENAI_MODEL="gpt-4"
+DEFAULT_OLLAMA_MODEL="llama2"
+```
+
+**Frontend Configuration:**
+```bash
+# frontend/.env (usually auto-configured)
+REACT_APP_BACKEND_URL="http://localhost:8001"
+```
+
+### 🔐 Security Notes
+
+- ❌ **NEVER commit .env files** - they contain sensitive API keys
+- ✅ **Only .env.example is tracked** - safe template without real keys
+- ✅ **Set up your own API keys** after cloning the repository
+- ✅ **Each user configures their own environment** locally
+
 ## 🎯 System Status
 
 ✅ **Backend**: Running with health monitoring  
