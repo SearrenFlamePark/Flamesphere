@@ -50,7 +50,7 @@ jobs:
     
     - name: Start MongoDB (Ubuntu/macOS)
       if: runner.os != 'Windows'
-      uses: supercharge/mongodb-github-action@1.10.0
+      uses: supercharge/mongodb-github-action@1.12.0
       with:
         mongodb-version: 6.0
     
