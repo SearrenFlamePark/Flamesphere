@@ -15,7 +15,7 @@
 
 ### Safe Example Values:
 - ✅ `OPENAI_API_KEY="your_openai_key_here"` (safe placeholder)
-- ✅ No "sk-" prefixes in example files
+- ✅ No triggering prefixes in example files
 - ✅ No actual tokens or secrets in any tracked files
 
 ### Final Verification:
