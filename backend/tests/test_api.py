@@ -94,7 +94,7 @@ class TestSyncAPI:
 class TestLLMService:
     def test_get_openai_llm(self):
         """Test creating OpenAI LLM instance"""
-        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test_key'}):
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'mock_api_key_for_testing'}):
             llm = llm_service.get_llm("openai", "gpt-4")
             assert llm is not None
 
