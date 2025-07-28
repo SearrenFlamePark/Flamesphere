@@ -493,9 +493,49 @@ obsidian_service = ObsidianService()
 chatgpt_parser = ChatGPTParser()
 
 # API Routes
-@api_router.get("/")
-async def root():
-    return {"message": "ChatGPT to Obsidian Memory Sync API", "version": "1.0.0"}
+@api_router.get("/health")
+async def health_check():
+    """System health check endpoint"""
+    try:
+        # Check database connection
+        db_status = "healthy"
+        try:
+            await db.admin.command('ping')
+        except Exception as e:
+            db_status = f"unhealthy: {str(e)}"
+        
+        # Check LLM services
+        config = await db.sync_configs.find_one({})
+        if config:
+            provider = config.get("llm_provider", "openai")
+            model = config.get(f"{provider}_model", "gpt-4" if provider == "openai" else "llama2")
+        else:
+            provider = "openai"
+            model = "gpt-4"
+        
+        llm_status = "healthy" if await llm_service.health_check(provider, model) else "unhealthy"
+        
+        # Check Obsidian vault
+        vault_status = "healthy" if obsidian_service.vault_path.exists() else "vault_missing"
+        
+        # Get recent sync status
+        recent_job = await db.sync_jobs.find_one({}, sort=[("created_at", -1)])
+        last_sync_status = recent_job.get("status", "no_jobs") if recent_job else "no_jobs"
+        
+        return {
+            "status": "healthy" if all(s == "healthy" for s in [db_status, llm_status, vault_status]) else "degraded",
+            "database": db_status,
+            "llm_service": llm_status,
+            "obsidian_vault": vault_status,
+            "last_sync": last_sync_status,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
 @api_router.post("/import/chatgpt", response_model=ProcessedConversation)
 async def import_chatgpt_conversation(import_data: ChatGPTImport, background_tasks: BackgroundTasks):
