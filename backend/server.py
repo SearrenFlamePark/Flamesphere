@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -6,20 +6,21 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import uuid
 from datetime import datetime
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 import yaml
+import json
+import re
 
 # Langchain imports
 from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.prompts import ChatPromptTemplate
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -52,16 +53,21 @@ class ConversationMessage(BaseModel):
     content: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-class Conversation(BaseModel):
+class ProcessedConversation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    title: str
-    messages: List[ConversationMessage]
+    original_title: str
+    structured_title: str
+    raw_content: str
+    structured_content: str
+    key_concepts: List[str] = []
+    frameworks: List[str] = []
+    action_items: List[str] = []
+    tags: List[str] = []
+    summary: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    processed_at: datetime = Field(default_factory=datetime.utcnow)
     synced_to_obsidian: bool = False
     obsidian_file_path: Optional[str] = None
-    tags: List[str] = []
-    summary: Optional[str] = None
 
 class SyncConfiguration(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -71,33 +77,33 @@ class SyncConfiguration(BaseModel):
     obsidian_vault_path: str
     sync_interval_minutes: int = 60
     auto_sync_enabled: bool = True
+    processing_template: str = "advanced_structured"  # "basic", "advanced_structured", "custom"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class SyncJob(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: str  # "pending", "running", "completed", "failed"
+    job_type: str  # "manual_sync", "auto_sync", "import_processing"
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    conversations_synced: int = 0
+    items_processed: int = 0
     errors: List[str] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
-class ConversationCreate(BaseModel):
-    title: str
-    messages: List[ConversationMessage]
-    tags: Optional[List[str]] = []
-
-class MessageCreate(BaseModel):
+class ChatGPTImport(BaseModel):
     content: str
-    role: str = "user"
+    import_type: str = "text"  # "text", "json", "markdown"
+    title: Optional[str] = None
+    tags: List[str] = []
 
 class SyncConfigUpdate(BaseModel):
     llm_provider: Optional[str] = None
-    openai_model: Optional[str] = None
+    openai_model: Optional[str] = None 
     ollama_model: Optional[str] = None
     sync_interval_minutes: Optional[int] = None
     auto_sync_enabled: Optional[bool] = None
+    processing_template: Optional[str] = None
 
 # Services
 class LLMService:
@@ -123,99 +129,239 @@ class LLMService:
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported LLM provider: {provider}")
     
-    async def generate_conversation_summary(self, messages: List[ConversationMessage], provider: str, model: str) -> str:
+    async def process_chatgpt_conversation(self, raw_content: str, provider: str, model: str, template: str = "advanced_structured") -> Dict[str, Any]:
+        """Process raw ChatGPT conversation into structured Obsidian format"""
         try:
             llm = self.get_llm(provider, model)
             
-            # Prepare conversation text
-            conversation_text = "\n".join([
-                f"{msg.role.upper()}: {msg.content}" for msg in messages
-            ])
-            
-            summary_prompt = f"""Please provide a concise summary of the following conversation in 2-3 sentences:
+            if template == "advanced_structured":
+                prompt = ChatPromptTemplate.from_template("""
+You are an expert at analyzing ChatGPT conversations and extracting structured knowledge for Obsidian note-taking.
 
-{conversation_text}
+Analyze the following ChatGPT conversation and create a structured breakdown:
 
-Summary:"""
+CONVERSATION:
+{raw_content}
+
+Please provide a JSON response with the following structure:
+{{
+    "structured_title": "A clear, concept-focused title with emoji if appropriate",
+    "summary": "2-3 sentence summary of key insights",
+    "key_concepts": ["list", "of", "main", "concepts"],
+    "frameworks": ["any", "frameworks", "or", "methodologies", "discussed"],
+    "action_items": ["specific", "actionable", "items", "or", "instructions"],
+    "tags": ["relevant", "obsidian", "tags"],
+    "structured_content": "Well-formatted markdown content with clear sections, bullet points, and proper Obsidian formatting. Include > Usage notes where appropriate."
+}}
+
+Focus on creating content similar to these example formats:
+- Use emojis for section headers where appropriate
+- Create clear bullet points for key information
+- Include usage notes in blockquotes
+- Structure information hierarchically
+- Maintain any specialized terminology
+""")
+                
+            elif template == "basic":
+                prompt = ChatPromptTemplate.from_template("""
+Convert this ChatGPT conversation to a clean Obsidian note:
+
+{raw_content}
+
+Provide JSON with: structured_title, summary, tags, and structured_content (markdown).
+""")
             
-            response = await llm.ainvoke([HumanMessage(content=summary_prompt)])
-            return response.content.strip()
+            messages = prompt.format_messages(raw_content=raw_content)
+            response = await llm.ainvoke(messages)
+            
+            # Try to parse JSON response
+            try:
+                result = json.loads(response.content.strip())
+                return result
+            except json.JSONDecodeError:
+                # If JSON parsing fails, create a basic structure
+                return {
+                    "structured_title": "Processed ChatGPT Conversation",
+                    "summary": "Content processing completed",
+                    "key_concepts": [],
+                    "frameworks": [],
+                    "action_items": [],
+                    "tags": ["chatgpt", "processed"],
+                    "structured_content": response.content
+                }
+                
         except Exception as e:
-            logger.error(f"Error generating summary: {str(e)}")
-            return "Summary generation failed"
+            logger.error(f"Error processing conversation: {str(e)}")
+            raise
+
+class ChatGPTParser:
+    """Parse different ChatGPT export formats"""
+    
+    @staticmethod
+    def parse_json_export(content: str) -> List[Dict[str, Any]]:
+        """Parse ChatGPT JSON export format"""
+        try:
+            data = json.loads(content)
+            conversations = []
+            
+            if isinstance(data, list):
+                # List of conversations
+                for item in data:
+                    conversations.append(ChatGPTParser._extract_conversation_from_json(item))
+            elif isinstance(data, dict):
+                # Single conversation or root object
+                if 'title' in data or 'messages' in data:
+                    conversations.append(ChatGPTParser._extract_conversation_from_json(data))
+                elif 'conversations' in data:
+                    for conv in data['conversations']:
+                        conversations.append(ChatGPTParser._extract_conversation_from_json(conv))
+            
+            return conversations
+        except Exception as e:
+            logger.error(f"Error parsing JSON export: {str(e)}")
+            return []
+    
+    @staticmethod
+    def _extract_conversation_from_json(conv_data: dict) -> Dict[str, Any]:
+        """Extract conversation data from JSON structure"""
+        title = conv_data.get('title', 'Untitled Conversation')
+        
+        # Handle different message structures
+        messages = []
+        if 'mapping' in conv_data:
+            # OpenAI export format with mapping
+            for msg_id, msg_data in conv_data['mapping'].items():
+                if msg_data.get('message') and msg_data['message'].get('content'):
+                    content = msg_data['message']['content']
+                    role = msg_data['message'].get('author', {}).get('role', 'user')
+                    
+                    if isinstance(content, dict) and 'parts' in content:
+                        text = ' '.join(content['parts'])
+                    elif isinstance(content, list):
+                        text = ' '.join(str(part) for part in content)
+                    else:
+                        text = str(content)
+                    
+                    if text.strip():
+                        messages.append({
+                            'role': role,
+                            'content': text,
+                            'timestamp': datetime.utcnow()
+                        })
+        
+        elif 'messages' in conv_data:
+            # Simple message array format
+            for msg in conv_data['messages']:
+                messages.append({
+                    'role': msg.get('role', 'user'),
+                    'content': msg.get('content', ''),
+                    'timestamp': datetime.utcnow()
+                })
+        
+        # Combine all message content
+        raw_content = f"# {title}\n\n"
+        for msg in messages:
+            role_name = "User" if msg['role'] == 'user' else "Assistant"
+            raw_content += f"**{role_name}:** {msg['content']}\n\n"
+        
+        return {
+            'title': title,
+            'raw_content': raw_content,
+            'messages': messages
+        }
+    
+    @staticmethod
+    def parse_text_format(content: str, title: str = None) -> Dict[str, Any]:
+        """Parse plain text conversation format"""
+        if not title:
+            # Try to extract title from first line or create one
+            lines = content.strip().split('\n')
+            first_line = lines[0].strip() if lines else ""
+            if first_line.startswith('#'):
+                title = first_line.replace('#', '').strip()
+            else:
+                title = "Imported ChatGPT Conversation"
+        
+        return {
+            'title': title,
+            'raw_content': content,
+            'messages': []  # Will be parsed if needed
+        }
 
 class ObsidianService:
     def __init__(self):
         self.vault_path = Path(os.environ.get('OBSIDIAN_VAULT_PATH', '/app/obsidian_vault'))
         self.vault_path.mkdir(exist_ok=True)
         
-    def generate_filename(self, conversation: Conversation) -> str:
-        """Generate a safe filename for the conversation"""
+    def generate_filename(self, processed_conv: ProcessedConversation) -> str:
+        """Generate a safe filename for the processed conversation"""
         # Clean title for filename
-        safe_title = "".join(c for c in conversation.title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_title = "".join(c for c in processed_conv.structured_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_title = safe_title.replace(' ', '_')[:50]  # Limit length
         
+        # Remove emojis for filename
+        safe_title = re.sub(r'[^\w\s-]', '', safe_title).strip()
+        
         # Add timestamp to avoid conflicts
-        timestamp = conversation.created_at.strftime("%Y%m%d_%H%M%S")
+        timestamp = processed_conv.created_at.strftime("%Y%m%d_%H%M%S")
         return f"{timestamp}_{safe_title}.md"
     
-    def format_conversation_as_markdown(self, conversation: Conversation) -> str:
-        """Convert conversation to Obsidian markdown format with YAML frontmatter"""
+    def format_processed_conversation_as_markdown(self, processed_conv: ProcessedConversation) -> str:
+        """Convert processed conversation to Obsidian markdown format with YAML frontmatter"""
         
         # YAML frontmatter
         frontmatter = {
-            'id': conversation.id,
-            'title': conversation.title,
-            'created': conversation.created_at.isoformat(),
-            'updated': conversation.updated_at.isoformat(),
-            'tags': conversation.tags or [],
-            'type': 'chatgpt_conversation',
-            'summary': conversation.summary or ''
+            'id': processed_conv.id,
+            'title': processed_conv.structured_title,
+            'original_title': processed_conv.original_title,
+            'created': processed_conv.created_at.isoformat(),
+            'processed': processed_conv.processed_at.isoformat(),
+            'tags': processed_conv.tags,
+            'type': 'chatgpt_knowledge',
+            'summary': processed_conv.summary,
+            'key_concepts': processed_conv.key_concepts,
+            'frameworks': processed_conv.frameworks,
+            'action_items': processed_conv.action_items
         }
         
-        yaml_content = yaml.dump(frontmatter, default_flow_style=False)
+        yaml_content = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)
         
         # Markdown content
         markdown_content = f"""---
 {yaml_content}---
 
-# {conversation.title}
+# {processed_conv.structured_title}
+
+## Summary
+{processed_conv.summary}
+
+{processed_conv.structured_content}
 
 """
         
-        if conversation.summary:
-            markdown_content += f"## Summary\n{conversation.summary}\n\n"
+        # Add concept links if any
+        if processed_conv.key_concepts:
+            markdown_content += "\n---\n\n**Key Concepts:** " + " | ".join([f"[[{concept}]]" for concept in processed_conv.key_concepts])
         
-        markdown_content += "## Conversation\n\n"
-        
-        for msg in conversation.messages:
-            role_emoji = "🧑" if msg.role == "user" else "🤖" if msg.role == "assistant" else "⚙️"
-            role_name = msg.role.title()
-            timestamp = msg.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-            
-            markdown_content += f"### {role_emoji} {role_name} - {timestamp}\n\n"
-            markdown_content += f"{msg.content}\n\n"
-        
-        # Add tags as Obsidian tags
-        if conversation.tags:
-            markdown_content += "---\n\n"
-            markdown_content += "**Tags:** " + " ".join([f"#{tag}" for tag in conversation.tags])
+        # Add tags
+        if processed_conv.tags:
+            markdown_content += "\n\n**Tags:** " + " ".join([f"#{tag}" for tag in processed_conv.tags])
         
         return markdown_content
     
-    async def sync_conversation_to_obsidian(self, conversation: Conversation) -> str:
-        """Sync a conversation to Obsidian vault"""
+    async def sync_processed_conversation_to_obsidian(self, processed_conv: ProcessedConversation) -> str:
+        """Sync a processed conversation to Obsidian vault"""
         try:
-            filename = self.generate_filename(conversation)
+            filename = self.generate_filename(processed_conv)
             file_path = self.vault_path / filename
             
-            markdown_content = self.format_conversation_as_markdown(conversation)
+            markdown_content = self.format_processed_conversation_as_markdown(processed_conv)
             
             # Write to file
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(markdown_content)
             
-            logger.info(f"Synced conversation to Obsidian: {file_path}")
+            logger.info(f"Synced processed conversation to Obsidian: {file_path}")
             return str(file_path)
         
         except Exception as e:
@@ -225,121 +371,93 @@ class ObsidianService:
 # Initialize services
 llm_service = LLMService()
 obsidian_service = ObsidianService()
+chatgpt_parser = ChatGPTParser()
 
 # API Routes
 @api_router.get("/")
 async def root():
     return {"message": "ChatGPT to Obsidian Memory Sync API", "version": "1.0.0"}
 
-@api_router.post("/conversations", response_model=Conversation)
-async def create_conversation(conversation_data: ConversationCreate):
-    """Create a new conversation"""
-    conversation = Conversation(
-        title=conversation_data.title,
-        messages=conversation_data.messages,
-        tags=conversation_data.tags or []
-    )
-    
-    # Save to database
-    await db.conversations.insert_one(conversation.dict())
-    return conversation
-
-@api_router.get("/conversations", response_model=List[Conversation])
-async def get_conversations(limit: int = 50, skip: int = 0):
-    """Get all conversations"""
-    conversations = await db.conversations.find().skip(skip).limit(limit).to_list(limit)
-    return [Conversation(**conv) for conv in conversations]
-
-@api_router.get("/conversations/{conversation_id}", response_model=Conversation)
-async def get_conversation(conversation_id: str):
-    """Get a specific conversation"""
-    conversation = await db.conversations.find_one({"id": conversation_id})
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return Conversation(**conversation)
-
-@api_router.post("/conversations/{conversation_id}/messages", response_model=ConversationMessage)
-async def add_message_to_conversation(conversation_id: str, message_data: MessageCreate):
-    """Add a message to an existing conversation"""
-    conversation = await db.conversations.find_one({"id": conversation_id})
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    new_message = ConversationMessage(
-        content=message_data.content,
-        role=message_data.role
-    )
-    
-    # Update conversation
-    await db.conversations.update_one(
-        {"id": conversation_id},
-        {
-            "$push": {"messages": new_message.dict()},
-            "$set": {"updated_at": datetime.utcnow(), "synced_to_obsidian": False}
-        }
-    )
-    
-    return new_message
-
-@api_router.post("/conversations/{conversation_id}/chat", response_model=ConversationMessage)
-async def chat_with_llm(conversation_id: str, message_data: MessageCreate):
-    """Add a user message and get LLM response"""
-    conversation = await db.conversations.find_one({"id": conversation_id})
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    # Get current sync config
-    config = await db.sync_configs.find_one({}) or SyncConfiguration().dict()
-    
-    # Add user message
-    user_message = ConversationMessage(
-        content=message_data.content,
-        role="user"
-    )
-    
+@api_router.post("/import/chatgpt", response_model=ProcessedConversation)
+async def import_chatgpt_conversation(import_data: ChatGPTImport, background_tasks: BackgroundTasks):
+    """Import and process a ChatGPT conversation"""
     try:
-        # Get LLM response
-        llm = llm_service.get_llm(config["llm_provider"], 
-                                  config.get("openai_model" if config["llm_provider"] == "openai" else "ollama_model", "gpt-4"))
+        # Parse the input based on type
+        if import_data.import_type == "json":
+            parsed_conversations = chatgpt_parser.parse_json_export(import_data.content)
+            if not parsed_conversations:
+                raise HTTPException(status_code=400, detail="Failed to parse JSON export")
+            # For now, take the first conversation
+            parsed_data = parsed_conversations[0]
+        else:
+            # Text or markdown format
+            parsed_data = chatgpt_parser.parse_text_format(import_data.content, import_data.title)
         
-        # Prepare conversation history
-        messages = []
-        for msg in conversation["messages"]:
-            if msg["role"] == "user":
-                messages.append(HumanMessage(content=msg["content"]))
-            elif msg["role"] == "assistant":
-                messages.append(AIMessage(content=msg["content"]))
-        
-        # Add new user message
-        messages.append(HumanMessage(content=message_data.content))
-        
-        # Get response
-        response = await llm.ainvoke(messages)
-        
-        ai_message = ConversationMessage(
-            content=response.content,
-            role="assistant"
+        # Create processed conversation record
+        processed_conv = ProcessedConversation(
+            original_title=parsed_data['title'],
+            structured_title=parsed_data['title'],  # Will be updated after processing
+            raw_content=parsed_data['raw_content'],
+            structured_content="Processing...",
+            tags=import_data.tags
         )
         
-        # Update conversation with both messages
-        await db.conversations.update_one(
-            {"id": conversation_id},
-            {
-                "$push": {"messages": {"$each": [user_message.dict(), ai_message.dict()]}},
-                "$set": {"updated_at": datetime.utcnow(), "synced_to_obsidian": False}
-            }
-        )
+        # Save to database
+        await db.processed_conversations.insert_one(processed_conv.dict())
         
-        return ai_message
+        # Process asynchronously
+        background_tasks.add_task(process_conversation_async, processed_conv.id)
+        
+        return processed_conv
         
     except Exception as e:
-        logger.error(f"Error in chat: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+        logger.error(f"Error importing conversation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Import error: {str(e)}")
+
+@api_router.post("/import/file")
+async def import_chatgpt_file(file: UploadFile = File(...), tags: str = ""):
+    """Import ChatGPT conversation from uploaded file"""
+    try:
+        content = await file.read()
+        content_str = content.decode('utf-8')
+        
+        # Determine file type
+        file_ext = Path(file.filename).suffix.lower()
+        import_type = "json" if file_ext == ".json" else "text"
+        
+        tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()] if tags else []
+        
+        import_data = ChatGPTImport(
+            content=content_str,
+            import_type=import_type,
+            title=Path(file.filename).stem,
+            tags=tag_list
+        )
+        
+        return await import_chatgpt_conversation(import_data, BackgroundTasks())
+        
+    except Exception as e:
+        logger.error(f"Error importing file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"File import error: {str(e)}")
+
+@api_router.get("/conversations/processed", response_model=List[ProcessedConversation])
+async def get_processed_conversations(limit: int = 50, skip: int = 0):
+    """Get all processed conversations"""
+    conversations = await db.processed_conversations.find().skip(skip).limit(limit).sort("created_at", -1).to_list(limit)
+    return [ProcessedConversation(**conv) for conv in conversations]
+
+@api_router.get("/conversations/processed/{conversation_id}", response_model=ProcessedConversation)
+async def get_processed_conversation(conversation_id: str):
+    """Get a specific processed conversation"""
+    conversation = await db.processed_conversations.find_one({"id": conversation_id})
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Processed conversation not found")
+    return ProcessedConversation(**conversation)
 
 @api_router.post("/sync/manual")
 async def manual_sync(background_tasks: BackgroundTasks):
     """Trigger manual sync to Obsidian"""
-    sync_job = SyncJob(status="pending")
+    sync_job = SyncJob(status="pending", job_type="manual_sync")
     await db.sync_jobs.insert_one(sync_job.dict())
     
     background_tasks.add_task(perform_sync, sync_job.id)
@@ -384,7 +502,56 @@ async def update_sync_config(config_update: SyncConfigUpdate):
     updated_config = await db.sync_configs.find_one({})
     return SyncConfiguration(**updated_config)
 
-# Background sync function
+# Background processing functions
+async def process_conversation_async(conversation_id: str):
+    """Process a conversation asynchronously"""
+    try:
+        # Get the conversation
+        conv_data = await db.processed_conversations.find_one({"id": conversation_id})
+        if not conv_data:
+            logger.error(f"Conversation {conversation_id} not found")
+            return
+        
+        processed_conv = ProcessedConversation(**conv_data)
+        
+        # Get sync config
+        config = await db.sync_configs.find_one({})
+        if config:
+            provider = config.get("llm_provider", "openai")
+            model = config.get(f"{provider}_model", "gpt-4" if provider == "openai" else "llama2")
+            template = config.get("processing_template", "advanced_structured")
+        else:
+            provider = "openai"
+            model = "gpt-4"
+            template = "advanced_structured"
+        
+        # Process the conversation
+        processed_data = await llm_service.process_chatgpt_conversation(
+            processed_conv.raw_content, provider, model, template
+        )
+        
+        # Update the conversation with processed data
+        update_data = {
+            "structured_title": processed_data.get("structured_title", processed_conv.original_title),
+            "structured_content": processed_data.get("structured_content", processed_conv.raw_content),
+            "summary": processed_data.get("summary", ""),
+            "key_concepts": processed_data.get("key_concepts", []),
+            "frameworks": processed_data.get("frameworks", []),
+            "action_items": processed_data.get("action_items", []),
+            "tags": processed_conv.tags + processed_data.get("tags", []),
+            "processed_at": datetime.utcnow()
+        }
+        
+        await db.processed_conversations.update_one(
+            {"id": conversation_id},
+            {"$set": update_data}
+        )
+        
+        logger.info(f"Successfully processed conversation: {conversation_id}")
+        
+    except Exception as e:
+        logger.error(f"Error processing conversation {conversation_id}: {str(e)}")
+
 async def perform_sync(job_id: str):
     """Perform the actual sync operation"""
     try:
@@ -394,53 +561,40 @@ async def perform_sync(job_id: str):
             {"$set": {"status": "running", "started_at": datetime.utcnow()}}
         )
         
-        # Get unsynced conversations
-        conversations = await db.conversations.find({"synced_to_obsidian": False}).to_list(None)
-        logger.info(f"Found {len(conversations)} conversations to sync")
+        # Get unsynced processed conversations
+        conversations = await db.processed_conversations.find({
+            "synced_to_obsidian": False,
+            "structured_content": {"$ne": "Processing..."}
+        }).to_list(None)
+        
+        logger.info(f"Found {len(conversations)} processed conversations to sync")
         
         synced_count = 0
         errors = []
         
-        # Get sync config
-        config = await db.sync_configs.find_one({})
-        if config:
-            provider = config.get("llm_provider", "openai")
-            model = config.get(f"{provider}_model", "gpt-4" if provider == "openai" else "llama2")
-        else:
-            provider = "openai"
-            model = "gpt-4"
-        
         for conv_data in conversations:
             try:
-                conversation = Conversation(**conv_data)
-                
-                # Generate summary if not exists
-                if not conversation.summary and len(conversation.messages) > 0:
-                    conversation.summary = await llm_service.generate_conversation_summary(
-                        conversation.messages, provider, model
-                    )
+                processed_conv = ProcessedConversation(**conv_data)
                 
                 # Sync to Obsidian
-                file_path = await obsidian_service.sync_conversation_to_obsidian(conversation)
+                file_path = await obsidian_service.sync_processed_conversation_to_obsidian(processed_conv)
                 
                 # Update conversation in database
-                await db.conversations.update_one(
-                    {"id": conversation.id},
+                await db.processed_conversations.update_one(
+                    {"id": processed_conv.id},
                     {
                         "$set": {
                             "synced_to_obsidian": True,
-                            "obsidian_file_path": file_path,
-                            "summary": conversation.summary,
-                            "updated_at": datetime.utcnow()
+                            "obsidian_file_path": file_path
                         }
                     }
                 )
                 
                 synced_count += 1
-                logger.info(f"Synced conversation: {conversation.title}")
+                logger.info(f"Synced processed conversation: {processed_conv.structured_title}")
                 
             except Exception as e:
-                error_msg = f"Error syncing conversation {conv_data.get('id', 'unknown')}: {str(e)}"
+                error_msg = f"Error syncing processed conversation {conv_data.get('id', 'unknown')}: {str(e)}"
                 logger.error(error_msg)
                 errors.append(error_msg)
         
@@ -451,13 +605,13 @@ async def perform_sync(job_id: str):
                 "$set": {
                     "status": "completed",
                     "completed_at": datetime.utcnow(),
-                    "conversations_synced": synced_count,
+                    "items_processed": synced_count,
                     "errors": errors
                 }
             }
         )
         
-        logger.info(f"Sync completed: {synced_count} conversations synced")
+        logger.info(f"Sync completed: {synced_count} processed conversations synced")
         
     except Exception as e:
         logger.error(f"Sync job {job_id} failed: {str(e)}")
@@ -477,7 +631,7 @@ async def scheduled_sync():
     """Scheduled sync job"""
     config = await db.sync_configs.find_one({})
     if config and config.get("auto_sync_enabled", True):
-        sync_job = SyncJob(status="pending")
+        sync_job = SyncJob(status="pending", job_type="auto_sync")
         await db.sync_jobs.insert_one(sync_job.dict())
         await perform_sync(sync_job.id)
 
