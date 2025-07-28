@@ -45,7 +45,7 @@ jobs:
         mkdir -p test_obsidian_vault
         echo "MONGO_URL=mongodb://localhost:27017" > backend/.env.test
         echo "DB_NAME=test_database" >> backend/.env.test
-        echo "OPENAI_API_KEY=test_key" >> backend/.env.test
+        echo "OPENAI_API_KEY=mock_key_for_testing" >> backend/.env.test
         echo "OBSIDIAN_VAULT_PATH=./test_obsidian_vault" >> backend/.env.test
     
     - name: Start MongoDB (Ubuntu/macOS)
