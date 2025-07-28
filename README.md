@@ -89,7 +89,7 @@ MONGO_URL="mongodb://localhost:27017"
 DB_NAME="chatgpt_obsidian_sync"
 
 # LLM Configuration - ADD YOUR ACTUAL API KEY
-OPENAI_API_KEY="sk-your-actual-openai-api-key-here"
+OPENAI_API_KEY="your-openai-api-key-goes-here"
 
 # File System Configuration - SET YOUR ACTUAL VAULT PATH  
 OBSIDIAN_VAULT_PATH="/path/to/your/obsidian/vault"
