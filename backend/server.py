@@ -110,33 +110,95 @@ class SyncConfigUpdate(BaseModel):
     processing_template: Optional[str] = None
 
 # Services
+class ConnectionManager:
+    """Manage API connections with retry logic and rate limiting"""
+    
+    def __init__(self):
+        self.last_request_time = {}
+        self.request_counts = {}
+        self.rate_limit_window = 60  # 1 minute window
+        self.max_requests_per_window = 50  # Conservative limit
+    
+    def should_rate_limit(self, service: str) -> bool:
+        """Check if we should rate limit requests to a service"""
+        now = time.time()
+        
+        # Clean old entries
+        if service in self.request_counts:
+            self.request_counts[service] = [
+                req_time for req_time in self.request_counts[service]
+                if now - req_time < self.rate_limit_window
+            ]
+        
+        # Check current request count
+        current_count = len(self.request_counts.get(service, []))
+        return current_count >= self.max_requests_per_window
+    
+    def record_request(self, service: str):
+        """Record a request to a service"""
+        now = time.time()
+        if service not in self.request_counts:
+            self.request_counts[service] = []
+        self.request_counts[service].append(now)
+        self.last_request_time[service] = now
+    
+    async def wait_if_needed(self, service: str):
+        """Wait if rate limiting is needed"""
+        if self.should_rate_limit(service):
+            wait_time = 60  # Wait 1 minute if rate limited
+            logger.warning(f"Rate limiting {service}, waiting {wait_time} seconds")
+            await asyncio.sleep(wait_time)
+
 class LLMService:
     def __init__(self):
         self.openai_api_key = os.environ.get('OPENAI_API_KEY')
         self.ollama_base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+        self.connection_manager = ConnectionManager()
         
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, Exception))
+    )
     def get_llm(self, provider: str, model: str):
-        if provider == "openai":
-            if not self.openai_api_key:
-                raise HTTPException(status_code=400, detail="OpenAI API key not configured")
-            return ChatOpenAI(
-                model=model,
-                api_key=self.openai_api_key,
-                temperature=0.7
-            )
-        elif provider == "ollama":
-            return ChatOllama(
-                model=model,
-                base_url=self.ollama_base_url,
-                temperature=0.7
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported LLM provider: {provider}")
-    
-    async def process_chatgpt_conversation(self, raw_content: str, provider: str, model: str, template: str = "advanced_structured") -> Dict[str, Any]:
-        """Process raw ChatGPT conversation into structured Obsidian format"""
+        """Get LLM instance with retry logic"""
         try:
+            if provider == "openai":
+                if not self.openai_api_key:
+                    raise HTTPException(status_code=400, detail="OpenAI API key not configured")
+                return ChatOpenAI(
+                    model=model,
+                    api_key=self.openai_api_key,
+                    temperature=0.7,
+                    timeout=30,
+                    max_retries=3
+                )
+            elif provider == "ollama":
+                return ChatOllama(
+                    model=model,
+                    base_url=self.ollama_base_url,
+                    temperature=0.7,
+                    timeout=30
+                )
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported LLM provider: {provider}")
+        except Exception as e:
+            logger.error(f"Error creating LLM instance: {str(e)}")
+            raise
+    
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
+        retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, Exception))
+    )
+    async def process_chatgpt_conversation(self, raw_content: str, provider: str, model: str, template: str = "advanced_structured") -> Dict[str, Any]:
+        """Process raw ChatGPT conversation into structured Obsidian format with robust error handling"""
+        try:
+            # Rate limiting check
+            await self.connection_manager.wait_if_needed(f"{provider}_{model}")
+            
             llm = self.get_llm(provider, model)
+            self.connection_manager.record_request(f"{provider}_{model}")
             
             if template == "advanced_structured":
                 prompt = ChatPromptTemplate.from_template("""
@@ -164,6 +226,8 @@ Focus on creating content similar to these example formats:
 - Include usage notes in blockquotes
 - Structure information hierarchically
 - Maintain any specialized terminology
+
+IMPORTANT: Return only valid JSON. No additional text or explanations.
 """)
                 
             elif template == "basic":
@@ -173,30 +237,81 @@ Convert this ChatGPT conversation to a clean Obsidian note:
 {raw_content}
 
 Provide JSON with: structured_title, summary, tags, and structured_content (markdown).
+Return only valid JSON.
 """)
             
             messages = prompt.format_messages(raw_content=raw_content)
-            response = await llm.ainvoke(messages)
             
-            # Try to parse JSON response
+            # Add timeout handling
             try:
-                result = json.loads(response.content.strip())
+                response = await asyncio.wait_for(llm.ainvoke(messages), timeout=60.0)
+            except asyncio.TimeoutError:
+                logger.error("LLM request timed out")
+                raise
+            
+            # Try to parse JSON response with better error handling
+            response_text = response.content.strip()
+            
+            # Clean up response if it has markdown code blocks
+            if response_text.startswith("```json"):
+                response_text = response_text.replace("```json", "").replace("```", "").strip()
+            elif response_text.startswith("```"):
+                response_text = response_text.replace("```", "").strip()
+            
+            try:
+                result = json.loads(response_text)
+                
+                # Validate required fields
+                required_fields = ["structured_title", "summary", "structured_content"]
+                for field in required_fields:
+                    if field not in result:
+                        result[field] = f"Generated {field}"
+                
+                # Ensure lists exist
+                for field in ["key_concepts", "frameworks", "action_items", "tags"]:
+                    if field not in result or not isinstance(result[field], list):
+                        result[field] = []
+                
                 return result
-            except json.JSONDecodeError:
-                # If JSON parsing fails, create a basic structure
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing failed: {str(e)}, Response: {response_text[:500]}")
+                # Create a fallback structure
                 return {
                     "structured_title": "Processed ChatGPT Conversation",
-                    "summary": "Content processing completed",
+                    "summary": "Content processing completed with parsing issues",
                     "key_concepts": [],
                     "frameworks": [],
                     "action_items": [],
-                    "tags": ["chatgpt", "processed"],
-                    "structured_content": response.content
+                    "tags": ["chatgpt", "processed", "parsing-issue"],
+                    "structured_content": f"# Processed Content\n\n{response_text}\n\n---\n\n*Note: Original processing had formatting issues*"
                 }
                 
         except Exception as e:
             logger.error(f"Error processing conversation: {str(e)}")
-            raise
+            # Create error fallback
+            return {
+                "structured_title": "Error Processing Conversation",
+                "summary": f"Processing failed: {str(e)[:100]}",
+                "key_concepts": [],
+                "frameworks": [],
+                "action_items": [],
+                "tags": ["chatgpt", "error", "needs-reprocessing"],
+                "structured_content": f"# Processing Error\n\nOriginal content:\n\n{raw_content[:1000]}...\n\n**Error:** {str(e)}"
+            }
+
+    async def health_check(self, provider: str, model: str) -> bool:
+        """Check if the LLM service is healthy"""
+        try:
+            llm = self.get_llm(provider, model)
+            test_response = await asyncio.wait_for(
+                llm.ainvoke([HumanMessage(content="Say 'OK'")]), 
+                timeout=10.0
+            )
+            return "ok" in test_response.content.lower()
+        except Exception as e:
+            logger.error(f"Health check failed for {provider}:{model} - {str(e)}")
+            return False
 
 class ChatGPTParser:
     """Parse different ChatGPT export formats"""
