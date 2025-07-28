@@ -1,38 +1,285 @@
+/* ChatGPT to Obsidian Sync Dashboard Styles */
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+        sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: #111827;
+    color: #ffffff;
+}
+
+code {
+    font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+        monospace;
+}
+
 .App {
-    text-align: center;
+    text-align: left;
 }
 
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* Custom scrollbar for better dark theme experience */
+::-webkit-scrollbar {
+    width: 8px;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
+::-webkit-scrollbar-track {
+    background: #1f2937;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+}
+
+/* Animation for status indicators */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
     }
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+.pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-.App-link {
-    color: #61dafb;
+/* Loading states */
+.loading-spinner {
+    border: 2px solid #374151;
+    border-top: 2px solid #3b82f6;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    animation: spin 1s linear infinite;
 }
 
-@keyframes App-logo-spin {
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Status indicators */
+.status-healthy {
+    background-color: #10b981;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
+
+.status-degraded {
+    background-color: #f59e0b;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.3);
+}
+
+.status-unhealthy {
+    background-color: #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
+}
+
+/* Enhanced form styling */
+input:focus, 
+textarea:focus, 
+select:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Button enhancements */
+button {
+    transition: all 0.2s ease-in-out;
+}
+
+button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+button:active {
+    transform: translateY(0);
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    transform: none;
+}
+
+/* Card hover effects */
+.card-hover {
+    transition: all 0.2s ease-in-out;
+}
+
+.card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+/* Conversation item styling */
+.conversation-item {
+    background: linear-gradient(135deg, #374151 0%, #4b5563 100%);
+    border-left: 4px solid #3b82f6;
+    transition: all 0.2s ease-in-out;
+}
+
+.conversation-item:hover {
+    border-left-color: #10b981;
+    transform: translateX(4px);
+}
+
+/* Sync job status colors */
+.job-completed {
+    background: linear-gradient(135deg, #065f46 0%, #10b981 100%);
+}
+
+.job-running {
+    background: linear-gradient(135deg, #92400e 0%, #f59e0b 100%);
+}
+
+.job-failed {
+    background: linear-gradient(135deg, #7f1d1d 0%, #ef4444 100%);
+}
+
+.job-pending {
+    background: linear-gradient(135deg, #374151 0%, #6b7280 100%);
+}
+
+/* Tag styling */
+.tag {
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+    transition: all 0.2s ease-in-out;
+}
+
+.tag:hover {
+    background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+    transform: scale(1.05);
+}
+
+/* Connection test results */
+.connection-success {
+    background: linear-gradient(135deg, #065f46 0%, #10b981 100%);
+    border: 1px solid #10b981;
+}
+
+.connection-error {
+    background: linear-gradient(135deg, #7f1d1d 0%, #ef4444 100%);
+    border: 1px solid #ef4444;
+}
+
+.connection-testing {
+    background: linear-gradient(135deg, #92400e 0%, #f59e0b 100%);
+    border: 1px solid #f59e0b;
+}
+
+/* Mobile responsiveness improvements */
+@media (max-width: 768px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+    
+    .status-cards {
+        grid-template-columns: 1fr;
+    }
+    
+    .nav-tabs {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    
+    .quick-actions {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+}
+
+/* Enhanced animations */
+@keyframes fadeIn {
     from {
-        transform: rotate(0deg);
+        opacity: 0;
+        transform: translateY(20px);
     }
     to {
-        transform: rotate(360deg);
+        opacity: 1;
+        transform: translateY(0);
     }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-out;
+}
+
+/* Custom checkbox styling */
+input[type="checkbox"] {
+    appearance: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 2px solid #4b5563;
+    border-radius: 0.25rem;
+    background-color: #374151;
+    cursor: pointer;
+    position: relative;
+}
+
+input[type="checkbox"]:checked {
+    background-color: #3b82f6;
+    border-color: #3b82f6;
+}
+
+input[type="checkbox"]:checked::before {
+    content: '✓';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 0.875rem;
+    font-weight: bold;
+}
+
+/* Progress bars */
+.progress-bar {
+    background: linear-gradient(90deg, #3b82f6 0%, #10b981 100%);
+    height: 4px;
+    border-radius: 2px;
+    transition: width 0.3s ease-in-out;
+}
+
+/* Error message styling */
+.error-message {
+    background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+    border: 1px solid #dc2626;
+    color: #fca5a5;
+}
+
+.success-message {
+    background: linear-gradient(135deg, #065f46 0%, #047857 100%);
+    border: 1px solid #10b981;
+    color: #86efac;
+}
+
+.warning-message {
+    background: linear-gradient(135deg, #92400e 0%, #b45309 100%);
+    border: 1px solid #f59e0b;
+    color: #fde68a;
+}
+
+/* Improved text contrast */
+.text-primary {
+    color: #f9fafb;
+}
+
+.text-secondary {
+    color: #d1d5db;
+}
+
+.text-muted {
+    color: #9ca3af;
 }
