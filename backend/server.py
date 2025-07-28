@@ -62,12 +62,12 @@ class ProcessedConversation(BaseModel):
     original_title: str
     structured_title: str
     raw_content: str
-    structured_content: str
+    structured_content: str = "Processing..."
     key_concepts: List[str] = []
     frameworks: List[str] = []
     action_items: List[str] = []
     tags: List[str] = []
-    summary: str
+    summary: str = "Processing..."
     created_at: datetime = Field(default_factory=datetime.utcnow)
     processed_at: datetime = Field(default_factory=datetime.utcnow)
     synced_to_obsidian: bool = False
