@@ -1,37 +1,19 @@
 version: 2
 updates:
-  # Backend Python dependencies
-  - package-ecosystem: "pip"
-    directory: "/backend"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    reviewers:
-      - "your-username"
-    labels:
-      - "dependencies"
-      - "backend"
-
-  # Frontend Node.js dependencies
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
+      interval: "monthly"
     reviewers:
-      - "your-username"
+      - "SearrenFlamePark"
     labels:
       - "dependencies"
       - "frontend"
-
-  # GitHub Actions
-  - package-ecosystem: "github-actions"
+  - package-ecosystem: "npm" 
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
+      interval: "monthly"
     reviewers:
-      - "your-username"
+      - "SearrenFlamePark"
     labels:
       - "dependencies"
-      - "github-actions"
